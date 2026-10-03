@@ -68,16 +68,31 @@ class CitationChecker(Middleware):
     name = "citation_checker"
 
     def after_agent(self, ctx, report):
-        # TODO (§11): khoảng 10-25 dòng.
-        #  1. Lấy report["claims"]; bỏ qua nếu rỗng hoặc ctx.corpus là None.
-        #  2. Với mỗi claim, gọi ctx.corpus.get(claim["doc_id"]).
-        #     Nếu tài liệu tồn tại VÀ claim["text"] khớp NGUYÊN VĂN một
-        #     DÒNG trong body của nó (không phải chỉ "nằm trong body")
-        #     -> trích dẫn đã đúng, giữ nguyên claim.
-        #  3. Nếu không: tìm trong ctx.corpus.docs tài liệu đầu tiên thoả
-        #     doc.body in ctx.observed_text  và  claim["text"] khớp
-        #     nguyên văn một DÒNG của doc.body -> đó là nguồn thật.
-        #     Đổi doc_id sang nó, GIỮ NGUYÊN text.
-        #  4. Không tìm được nguồn nào -> để `critic` xử lý, đừng bịa doc_id.
-        #  5. Cập nhật report["citations"] = danh sách doc_id đã sắp xếp.
-        return report  # <- mặc định KHÔNG LÀM GÌ: agent vẫn chạy được
+        claims = report.get("claims")
+        if not isinstance(claims, list) or not claims or not getattr(ctx, "corpus", None):
+            return report
+
+        observed_text = getattr(ctx, "observed_text", "") or ""
+
+        for claim in claims:
+            if not isinstance(claim, dict) or "text" not in claim:
+                continue
+            text = claim["text"]
+            doc_id = claim.get("doc_id")
+
+            # 1. Kiểm tra tài liệu hiện tại đã đúng nguồn từng dòng chưa
+            curr_doc = ctx.corpus.get(doc_id) if doc_id else None
+            if curr_doc and curr_doc.body and (text in curr_doc.body.splitlines()):
+                continue
+
+            # 2. Tìm tài liệu thật trong observed_text
+            for doc in ctx.corpus.docs:
+                if doc.body and (doc.body in observed_text) and (text in doc.body.splitlines()):
+                    claim["doc_id"] = doc.doc_id
+                    break
+
+        # 3. Đồng bộ lại danh sách citations
+        report["citations"] = sorted(
+            set(c["doc_id"] for c in claims if isinstance(c, dict) and c.get("doc_id"))
+        )
+        return report
